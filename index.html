@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Slingshot Probe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+:root {
+  --void: #0b1026;
+  --panel: #131b3d;
+  --line: #28335f;
+  --ink: #e7e9f5;
+  --muted: #8f97c0;
+  --amber: #ffb547;
+  --cyan: #7fd6ff;
+  --rose: #ff6b7d;
+  --display: 'Big Shoulders Display', 'Arial Narrow', Impact, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+html, body { background: var(--void); color: var(--ink); margin: 0; }
+body {
+  font-family: var(--mono);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 28px;
+}
+.wrap { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px 24px; }
+h1 {
+  font-family: var(--display); font-weight: 800; text-transform: uppercase;
+  font-size: clamp(2.4rem, 7vw, 3.8rem); line-height: .85; letter-spacing: .01em; margin: 0;
+  text-wrap: balance;
+}
+h1 span { color: var(--amber); }
+.sub { color: var(--muted); font-size: .78rem; margin: 8px 0 0; max-width: 52ch; line-height: 1.5; }
+.readout { display: grid; grid-template-columns: repeat(4, auto); gap: 2px 20px; margin: 0; font-variant-numeric: tabular-nums; }
+.readout div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.readout dt { font-size: .62rem; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.readout dd { margin: 0; font-size: 1.02rem; font-weight: 600; white-space: nowrap; }
+.stage {
+  position: relative; width: 100%; max-width: 100%; aspect-ratio: 8 / 5;
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+  background: var(--void); touch-action: none; user-select: none; -webkit-user-select: none;
+  cursor: crosshair;
+}
+canvas { display: block; width: 100%; height: 100%; }
+.overlay {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--void) 74%, transparent);
+}
+.card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; text-align: center; max-width: 44ch; }
+.card .eyebrow { font-size: .66rem; letter-spacing: .18em; text-transform: uppercase; color: var(--cyan); }
+.card h2 { font-family: var(--display); font-weight: 800; text-transform: uppercase; font-size: clamp(1.9rem, 6vw, 3rem); line-height: .9; margin: 0; }
+.card p { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.5; }
+button {
+  font: inherit; font-weight: 600; font-size: .82rem; cursor: pointer;
+  background: var(--amber); color: var(--void); border: 1px solid var(--amber);
+  border-radius: 4px; padding: 9px 16px;
+}
+button.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+button:disabled { opacity: .35; cursor: not-allowed; }
+button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.status { font-size: .8rem; color: var(--muted); min-height: 1.3em; min-width: 0; flex: 1 1 260px; }
+.status.bad { color: var(--rose); }
+.status.good { color: var(--cyan); }
+.levels { display: flex; gap: 6px; flex-wrap: wrap; }
+.levels button { padding: 6px 11px; background: transparent; color: var(--ink); border-color: var(--line); font-variant-numeric: tabular-nums; }
+.levels button[aria-current="true"] { border-color: var(--amber); color: var(--amber); }
+@media (max-width: 520px) {
+  .readout { grid-template-columns: repeat(2, auto); }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Slingshot <span>Probe</span></h1>
+      <p class="sub">Drag back anywhere on the field, then release to launch. Use the gravity wells to bend your path into the blue target ring. Fewer launches is better.</p>
+    </div>
+    <dl class="readout">
+      <div><dt>Mission</dt><dd id="r-level">1 / 5</dd></div>
+      <div><dt>Launches</dt><dd id="r-shots">0</dd></div>
+      <div><dt>Launch Δv</dt><dd id="r-dv">0.00 km/s</dd></div>
+      <div><dt>Flight</dt><dd id="r-time">T+ 0.0 s</dd></div>
+    </dl>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="cv" aria-label="Game field: drag to aim and launch the probe"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="card">
+        <span class="eyebrow" id="ov-eyebrow">Mission 1</span>
+        <h2 id="ov-title">First pass</h2>
+        <p id="ov-body">A planet sits between you and the target. Curve around it.</p>
+        <button id="ov-btn">Begin</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="status" id="status" role="status">Drag back, release to launch.</div>
+    <div class="levels" id="levels"></div>
+    <button class="ghost" id="reset">Reset mission</button>
+  </div>
+</div>
+
+<script>
+// PHYSICS-START
+const W = 1000, H = 625;
+const MAX_PULL = 170, MAX_SPEED = 540, FLIGHT_LIMIT = 14, MARGIN = 160;
+const LEVELS = [
+  { name: 'First pass', brief: 'A planet sits between you and the target. Curve around it.',
+    start: [110, 312], target: [890, 312, 34],
+    planets: [{ x: 500, y: 312, r: 46, m: 9e6 }] },
+  { name: 'Twin wells', brief: 'Two planets, one climb. Thread between them or swing around both.',
+    start: [110, 500], target: [890, 140, 32],
+    planets: [{ x: 380, y: 290, r: 38, m: 7e6 }, { x: 650, y: 370, r: 44, m: 9e6 }] },
+  { name: 'Far side', brief: 'The target hides behind a heavy world. Let it whip you around.',
+    start: [110, 110], target: [770, 520, 30],
+    planets: [{ x: 520, y: 320, r: 62, m: 1.6e7 }, { x: 860, y: 300, r: 20, m: 1.5e6 }] },
+  { name: 'The needle', brief: 'Two giants pinch the lane and a rock blocks the middle.',
+    start: [110, 312], target: [910, 312, 28],
+    planets: [{ x: 470, y: 150, r: 52, m: 1.3e7 }, { x: 470, y: 475, r: 52, m: 1.3e7 }, { x: 730, y: 312, r: 24, m: 2.5e6 }] },
+  { name: 'Moonrise', brief: 'A moon circles the planet. Time your launch around it.',
+    start: [100, 545], target: [880, 95, 30],
+    planets: [{ x: 500, y: 330, r: 50, m: 1.25e7 },
+              { r: 18, m: 2.4e6, orbit: { cx: 500, cy: 330, R: 175, w: 0.55, ph: 0 } }] },
+];
+
+function planetPos(p, t) {
+  if (!p.orbit) return [p.x, p.y];
+  const o = p.orbit, a = o.ph + o.w * t;
+  return [o.cx + o.R * Math.cos(a), o.cy + o.R * Math.sin(a)];
+}
+function stepProbe(s, h, lv) {
+  let ax = 0, ay = 0;
+  for (const p of lv.planets) {
+    const [px, py] = planetPos(p, s.t);
+    const dx = px - s.x, dy = py - s.y;
+    const r2 = dx * dx + dy * dy, r = Math.sqrt(r2);
+    const f = p.m / (r2 + 400);
+    ax += f * dx / r; ay += f * dy / r;
+  }
+  s.vx += ax * h; s.vy += ay * h;
+  s.x += s.vx * h; s.y += s.vy * h;
+  s.t += h; s.ft += h;
+  for (const p of lv.planets) {
+    const [px, py] = planetPos(p, s.t);
+    if (Math.hypot(px - s.x, py - s.y) < p.r) return 'crash';
+  }
+  const [tx, ty, tr] = lv.target;
+  if (Math.hypot(tx - s.x, ty - s.y) < tr) return 'hit';
+  if (s.x < -MARGIN || s.x > W + MARGIN || s.y < -MARGIN || s.y > H + MARGIN) return 'lost';
+  if (s.ft > FLIGHT_LIMIT) return 'timeout';
+  return null;
+}
+const H_STEP = 1 / 240;
+// PHYSICS-END
+
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d'), stage = $('stage');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { void: css('--void'), line: css('--line'), ink: css('--ink'), muted: css('--muted'), amber: css('--amber'), cyan: css('--cyan'), rose: css('--rose') };
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+let store = {};
+try { store = JSON.parse(localStorage.getItem('slingshot') || '{}') || {}; } catch (e) { store = {}; }
+const save = () => { try { localStorage.setItem('slingshot', JSON.stringify(store)); } catch (e) {} };
+store.unlocked = Math.max(1, store.unlocked || 1);
+store.best = store.best || {};
+
+let li = 0, lv = LEVELS[0], clock = 0, shots = 0;
+let probe = null, trails = [], aim = null, lastDv = 0, state = 'intro', resetTimer = null;
+
+// starfield
+let stars = [];
+(function () {
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 220; i++) stars.push([rnd() * W, rnd() * H, rnd() * 1.3 + 0.2, rnd() * 0.6 + 0.2]);
+})();
+
+function resize() {
+  const r = stage.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+}
+new ResizeObserver(resize).observe(stage);
+
+function toWorld(e) {
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H];
+}
+function launchVec(a) {
+  let dx = a.ax - a.x, dy = a.ay - a.y, d = Math.hypot(dx, dy);
+  if (d > MAX_PULL) { dx *= MAX_PULL / d; dy *= MAX_PULL / d; d = MAX_PULL; }
+  const k = MAX_SPEED / MAX_PULL;
+  return { vx: dx * k, vy: dy * k, speed: d * k, px: dx, py: dy };
+}
+const kms = s => (s / 100).toFixed(2) + ' km/s';
+
+function setStatus(msg, kind) { const s = $('status'); s.textContent = msg; s.className = 'status' + (kind ? ' ' + kind : ''); }
+function renderLevels() {
+  const box = $('levels'); box.innerHTML = '';
+  LEVELS.forEach((L, i) => {
+    const b = document.createElement('button');
+    b.textContent = i + 1; b.id = 'lvl-' + (i + 1);
+    b.setAttribute('aria-label', 'Mission ' + (i + 1) + ': ' + L.name);
+    b.setAttribute('aria-current', i === li ? 'true' : 'false');
+    b.disabled = i + 1 > store.unlocked;
+    b.onclick = () => loadLevel(i, true);
+    box.appendChild(b);
+  });
+}
+function updateReadout() {
+  $('r-level').textContent = (li + 1) + ' / ' + LEVELS.length;
+  $('r-shots').textContent = shots;
+  $('r-dv').textContent = kms(aim ? launchVec(aim).speed : lastDv);
+  $('r-time').textContent = 'T+ ' + (probe ? probe.ft : 0).toFixed(1) + ' s';
+}
+function showOverlay(eyebrow, title, body, btn, onClick) {
+  $('ov-eyebrow').textContent = eyebrow; $('ov-title').textContent = title;
+  $('ov-body').textContent = body; $('ov-btn').textContent = btn;
+  $('ov-btn').onclick = onClick; $('overlay').hidden = false;
+}
+function loadLevel(i, intro) {
+  clearTimeout(resetTimer);
+  li = i; lv = LEVELS[i]; clock = 0; shots = 0; probe = null; trails = []; aim = null; lastDv = 0;
+  renderLevels(); updateReadout();
+  setStatus('Drag back, release to launch.');
+  if (intro) {
+    state = 'intro';
+    const best = store.best[i] ? ' Your best: ' + store.best[i] + (store.best[i] === 1 ? ' launch.' : ' launches.') : '';
+    showOverlay('Mission ' + (i + 1) + ' of ' + LEVELS.length, lv.name, lv.brief + best, 'Begin', () => { $('overlay').hidden = true; state = 'aim'; });
+  } else { state = 'aim'; $('overlay').hidden = true; }
+}
+
+stage.addEventListener('pointerdown', e => {
+  if (state !== 'aim' || probe) return;
+  const [x, y] = toWorld(e);
+  aim = { ax: x, ay: y, x, y };
+  stage.setPointerCapture(e.pointerId);
+});
+stage.addEventListener('pointermove', e => {
+  if (!aim) return;
+  const [x, y] = toWorld(e); aim.x = x; aim.y = y;
+});
+const release = e => {
+  if (!aim) return;
+  const v = launchVec(aim); aim = null;
+  if (v.speed < 25) { setStatus('Pull back further to launch.'); return; }
+  shots++; lastDv = v.speed;
+  probe = { x: lv.start[0], y: lv.start[1], vx: v.vx, vy: v.vy, t: clock, ft: 0, path: [[lv.start[0], lv.start[1]]] };
+  state = 'fly'; setStatus('Probe away.');
+};
+stage.addEventListener('pointerup', release);
+stage.addEventListener('pointercancel', () => { aim = null; });
+
+const FAIL = { crash: 'Impact. The probe hit a planet.', lost: 'Lost to deep space.', timeout: 'Out of fuel cells. Flight time exceeded 14 s.' };
+function endFlight(result) {
+  trails.push(probe.path); if (trails.length > 6) trails.shift();
+  if (result === 'hit') {
+    state = 'done';
+    const prev = store.best[li];
+    if (!prev || shots < prev) store.best[li] = shots;
+    store.unlocked = Math.max(store.unlocked, Math.min(LEVELS.length, li + 2));
+    save(); renderLevels();
+    const total = LEVELS.reduce((a, _, i) => a + (store.best[i] || 0), 0);
+    const allDone = LEVELS.every((_, i) => store.best[i]);
+    setStatus('Target reached in ' + shots + (shots === 1 ? ' launch.' : ' launches.'), 'good');
+    const last = li === LEVELS.length - 1;
+    setTimeout(() => {
+      if (last) showOverlay('All missions complete', 'Tour finished',
+        allDone ? 'Best-run total: ' + total + ' launches across ' + LEVELS.length + ' missions. Can you do every one in a single launch?' : 'Every mission done.',
+        'Fly again', () => loadLevel(0, true));
+      else showOverlay('Mission ' + (li + 1) + ' cleared', shots === 1 ? 'Clean shot' : 'Target reached',
+        shots + (shots === 1 ? ' launch.' : ' launches.') + ' Next: ' + LEVELS[li + 1].name + '.',
+        'Next mission', () => loadLevel(li + 1, true));
+    }, 700);
+  } else {
+    state = 'reset'; setStatus(FAIL[result] + ' Try another angle.', 'bad');
+    resetTimer = setTimeout(() => { probe = null; state = 'aim'; updateReadout(); }, 900);
+  }
+}
+
+let last = performance.now(), acc = 0;
+function frame(now) {
+  acc += Math.min(0.05, (now - last) / 1000); last = now;
+  while (acc >= H_STEP) {
+    acc -= H_STEP;
+    if (state === 'fly' && probe) {
+      const r = stepProbe(probe, H_STEP, lv);
+      clock = probe.t;
+      if (probe.path.length === 0 || Math.round(probe.ft / H_STEP) % 4 === 0) probe.path.push([probe.x, probe.y]);
+      if (r) { endFlight(r); break; }
+    } else clock += H_STEP;
+  }
+  updateReadout(); draw(now / 1000);
+  requestAnimationFrame(frame);
+}
+
+function draw(tReal) {
+  const s = cv.width / W;
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  ctx.fillStyle = C.void; ctx.fillRect(0, 0, W, H);
+  for (const [x, y, r, a] of stars) { ctx.globalAlpha = a; ctx.fillStyle = C.ink; ctx.fillRect(x, y, r, r); }
+  ctx.globalAlpha = 1;
+
+  // planets with gravity contours
+  for (const p of lv.planets) {
+    const [px, py] = planetPos(p, clock);
+    if (p.orbit) {
+      ctx.strokeStyle = C.line; ctx.setLineDash([2, 6]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(p.orbit.cx, p.orbit.cy, p.orbit.R, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.setLineDash([3, 7]); ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+    for (const k of [1.7, 2.6]) { ctx.beginPath(); ctx.arc(px, py, p.r * k, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.setLineDash([]);
+    const g = ctx.createRadialGradient(px - p.r * .35, py - p.r * .4, p.r * .1, px, py, p.r);
+    g.addColorStop(0, p.orbit ? '#c9cde6' : '#5a6cc4'); g.addColorStop(1, p.orbit ? '#4c537a' : '#1d2656');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, py, p.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(231,233,245,.18)'; ctx.lineWidth = 1.2; ctx.stroke();
+  }
+
+  // target
+  const [tx, ty, tr] = lv.target, pulse = reduceMotion ? 0 : Math.sin(tReal * 3) * 0.5 + 0.5;
+  ctx.strokeStyle = C.cyan; ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.25 + pulse * 0.25; ctx.beginPath(); ctx.arc(tx, ty, tr + 6 + pulse * 6, 0, Math.PI * 2); ctx.stroke();
+  ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(tx, ty, tr, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(tx + dx * (tr - 8), ty + dy * (tr - 8)); ctx.lineTo(tx + dx * (tr + 2), ty + dy * (tr + 2)); }
+  ctx.stroke();
+
+  // old trails
+  ctx.strokeStyle = C.amber; ctx.lineWidth = 1.2;
+  trails.forEach((path, i) => {
+    ctx.globalAlpha = 0.08 + 0.22 * (i + 1) / trails.length;
+    ctx.beginPath(); path.forEach(([x, y], j) => j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
+  // launch pad
+  const [sx, sy] = lv.start;
+  ctx.strokeStyle = C.amber; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.6;
+  ctx.beginPath(); ctx.arc(sx, sy, 14, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
+
+  // aiming
+  if (aim) {
+    const v = launchVec(aim);
+    ctx.strokeStyle = C.muted; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(aim.ax, aim.ay); ctx.lineTo(aim.ax - v.px, aim.ay - v.py); ctx.stroke(); ctx.setLineDash([]);
+    // short predicted path (first 0.9 s only)
+    const sim = { x: sx, y: sy, vx: v.vx, vy: v.vy, t: clock, ft: 0 };
+    ctx.fillStyle = C.amber;
+    for (let i = 0; i < 216; i++) {
+      if (stepProbe(sim, H_STEP, lv)) break;
+      if (i % 12 === 0) { ctx.globalAlpha = 1 - i / 216; ctx.beginPath(); ctx.arc(sim.x, sim.y, 2, 0, Math.PI * 2); ctx.fill(); }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // live probe
+  if (probe) {
+    ctx.strokeStyle = C.amber; ctx.lineWidth = 2;
+    ctx.beginPath(); probe.path.forEach(([x, y], j) => j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineTo(probe.x, probe.y); ctx.stroke();
+  }
+  const bx = probe ? probe.x : sx, by = probe ? probe.y : sy;
+  const glow = ctx.createRadialGradient(bx, by, 0, bx, by, 14);
+  glow.addColorStop(0, 'rgba(255,181,71,.55)'); glow.addColorStop(1, 'rgba(255,181,71,0)');
+  ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(bx, by, 14, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(bx, by, 4, 0, Math.PI * 2); ctx.fill();
+}
+
+$('reset').onclick = () => loadLevel(li, false);
+resize(); loadLevel(0, true); requestAnimationFrame(frame);
+</script>
+</body>
+</html>
